@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import { env } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { createSwapRoutes } from "./routes/swap-routes.js";
 import { createLendingRoutes } from "./routes/lending-routes.js";
@@ -10,14 +11,12 @@ import { SwapService } from "./services/swap-service.js";
 import { LendingService } from "./services/lending-service.js";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const HOST = process.env.HOST || "0.0.0.0";
 
 // ─── Middleware ────────────────────────────────────────────
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || "http://localhost:5173",
+  origin: env.CORS_ORIGIN,
   credentials: true,
 }));
 app.use(express.json());
@@ -27,19 +26,16 @@ app.use(morgan("combined", {
 
 // ─── Services ─────────────────────────────────────────────
 
-const rpcUrl = process.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org";
-const networkPassphrase = process.env.STELLAR_PASSPHRASE || "Test SDF Network ; September 2015";
-
 const swapService = new SwapService(
-  rpcUrl,
-  networkPassphrase,
-  process.env.SWAP_CONTRACT_ID || ""
+  env.STELLAR_RPC_URL,
+  env.STELLAR_PASSPHRASE,
+  env.SWAP_CONTRACT_ID
 );
 
 const lendingService = new LendingService(
-  rpcUrl,
-  networkPassphrase,
-  process.env.LENDING_CONTRACT_ID || ""
+  env.STELLAR_RPC_URL,
+  env.STELLAR_PASSPHRASE,
+  env.LENDING_CONTRACT_ID
 );
 
 // ─── Routes ───────────────────────────────────────────────
@@ -49,7 +45,7 @@ app.get("/health", (_req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     version: "0.1.0",
-    network: process.env.STELLAR_NETWORK || "testnet",
+    network: env.STELLAR_NETWORK,
   });
 });
 
@@ -62,7 +58,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   logger.error({ err }, "Unhandled error");
   res.status(500).json({
     code: "INTERNAL_ERROR",
-    message: process.env.NODE_ENV === "production"
+    message: env.NODE_ENV === "production"
       ? "An unexpected error occurred"
       : err.message,
   });
@@ -78,10 +74,10 @@ app.use((_req, res) => {
 
 // ─── Start Server ─────────────────────────────────────────
 
-app.listen(PORT, () => {
-  logger.info(`🚀 DeFi Backend running on http://${HOST}:${PORT}`);
-  logger.info(`📡 Network: ${process.env.STELLAR_NETWORK || "testnet"}`);
-  logger.info(`🔗 RPC: ${rpcUrl}`);
+app.listen(env.PORT, () => {
+  logger.info(`🚀 DeFi Backend running on http://${env.HOST}:${env.PORT}`);
+  logger.info(`📡 Network: ${env.STELLAR_NETWORK}`);
+  logger.info(`🔗 RPC: ${env.STELLAR_RPC_URL}`);
 });
 
 export default app;
