@@ -1,104 +1,270 @@
 # Web3 Suite — DeFi Backend API
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Issues](https://img.shields.io/github/issues/web3-suite/defi-backend)](https://github.com/web3-suite/defi-backend/issues)
-[![Stars](https://img.shields.io/github/stars/web3-suite/defi-backend)](https://github.com/web3-suite/defi-backend/stargazers)
-[![Node](https://img.shields.io/badge/Node.js-20+-green)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)](https://www.typescriptlang.org)
+> Type-safe REST API server bridging the frontend to Stellar/Soroban DeFi smart contracts with Zod validation, structured logging, and Docker deployment.
 
-> TypeScript REST API bridging the frontend to Stellar/Soroban DeFi smart contracts — swap quotes, liquidity management, and lending operations.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Issues](https://img.shields.io/github/issues/sudo-robi/web3-suite-defi-backend)](https://github.com/sudo-robi/web3-suite-defi-backend/issues)
+[![Stars](https://img.shields.io/github/stars/sudo-robi/web3-suite-defi-backend)](https://github.com/sudo-robi/web3-suite-defi-backend/stargazers)
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [API Reference](#api-reference)
+  - [Health Check](#health-check)
+  - [Swap Endpoints](#swap-endpoints)
+  - [Lending Endpoints](#lending-endpoints)
+- [Getting Started](#getting-started)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Environment Variables](#environment-variables)
+- [Running](#running)
+- [Docker](#docker)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
 ## Overview
 
-The backend service acts as a middleware layer between the React frontend and on-chain Soroban contracts. It handles:
+**Web3 Suite DeFi Backend** is a TypeScript REST API server that acts as the middleware between the React frontend and Soroban smart contracts deployed on the Stellar network. It handles request validation, Stellar RPC communication, transaction signing, encoding/decoding of ScVal types, and structured logging.
 
-- **RPC Communication** — Manages Stellar RPC connections, transaction building, and XDR encoding/decoding
-- **Request Validation** — Zod schema validation on all inputs
-- **Quote Engine** — Real-time swap quotes with price impact calculations
-- **Error Handling** — Structured error responses with pino logging
-- **Caching Ready** — Redis integration for rate limiting and quote caching
+### Why This Exists
+
+Direct browser-to-contract interaction is complex and error-prone. This backend provides a clean HTTP API that abstracts Stellar SDK complexity, validates inputs with Zod schemas, handles transaction submission and confirmation polling, and exposes a stable contract-independent interface to the frontend.
+
+### Target Audience
+
+- **Frontend developers** consuming the DeFi API
+- **Backend engineers** extending the protocol
+- **DevOps teams** deploying and monitoring the service
+- **Protocol integrators** building on top of the DeFi primitives
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐     ┌─────────────────────────────────────────────┐
-│   Frontend   │────▶│              Express Server                  │
-│  (React/Vite)│     │                                              │
-└──────────────┘     │  ┌─────────┐  ┌──────────┐  ┌───────────┐  │
-                     │  │  CORS   │  │  Helmet  │  │  Pino     │  │
-                     │  │  middleware │  │  (security) │  │  (logging) │  │
-                     │  └─────────┘  └──────────┘  └───────────┘  │
-                     │                                              │
-                     │  ┌──────────────────────────────────────┐   │
-                     │  │              Routes                   │   │
-                     │  │  /api/swap/*    /api/lending/*        │   │
-                     │  └──────────────┬───────────────────────┘   │
-                     │                 │                            │
-                     │  ┌──────────────▼───────────────────────┐   │
-                     │  │             Services                  │   │
-                     │  │  SwapService    LendingService        │   │
-                     │  └──────────────┬───────────────────────┘   │
-                     │                 │                            │
-                     │  ┌──────────────▼───────────────────────┐   │
-                     │  │        StellarContractClient          │   │
-                     │  │   (XDR encode/decode, tx submit)      │   │
-                     │  └──────────────┬───────────────────────┘   │
-                     └─────────────────┼───────────────────────────┘
-                                       │
-                              ┌────────▼────────┐
-                              │  Stellar RPC    │
-                              │  (Soroban)      │
-                              └────────┬────────┘
-                                       │
-                              ┌────────▼────────┐
-                              │  Soroban        │
-                              │  Contracts      │
-                              │  (on-chain)     │
-                              └─────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         Client Layer                             │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
+│  │   Frontend    │  │  Mobile App  │  │   Third-Party        │   │
+│  │  (React/Vite) │  │              │  │   Integrators        │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘   │
+│         │                  │                     │                │
+└─────────┼──────────────────┼─────────────────────┼────────────────┘
+          │ HTTP             │ HTTP                │ HTTP
+          ▼                  ▼                     ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      Express.js Server                           │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │                    Middleware Stack                       │    │
+│  │  helmet() → cors() → express.json() → morgan()          │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  ┌─────────────┐  ┌─────────────────────────────────────────┐   │
+│  │   Routes     │  │              Services                    │   │
+│  │              │  │                                         │   │
+│  │ /api/swap    │──│  SwapService                            │   │
+│  │ /api/lending │──│  LendingService                         │   │
+│  └─────────────┘  └────────────────┬────────────────────────┘   │
+│                                    │                             │
+│  ┌─────────────────────────────────▼────────────────────────┐   │
+│  │              StellarContractClient                        │   │
+│  │                                                           │   │
+│  │  invokeView()  → simulateTransaction (read-only)         │   │
+│  │  invokeContract() → sendTransaction + waitForTx          │   │
+│  │  ScVal encoding: encodeU128, encodeBool, encodeAddress   │   │
+│  │  ScVal decoding: decodeU128                              │   │
+│  └─────────────────────────┬───────────────────────────────┘   │
+│                            │                                    │
+└────────────────────────────┼────────────────────────────────────┘
+                             │ Stellar RPC
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   Stellar / Soroban Network                      │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐   │
+│  │ Swap Contract │  │ Liquidity Contract│  │ Lending Contract │   │
+│  └──────────────┘  └──────────────────┘  └──────────────────┘   │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  Redis (optional) — rate limiting, caching, session state        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+1. **Request arrives** → Express middleware validates and logs
+2. **Route handler** → Parses request with Zod schema
+3. **Service layer** → Constructs Soroban contract invocation
+4. **Contract client** → Encodes ScVal args, submits transaction to Stellar RPC
+5. **Response** → Decodes ScVal result, returns JSON to client
+
+---
+
+## Features
+
+1. **Zod Request Validation** — All inputs validated against strict schemas before processing
+2. **Stellar RPC Integration** — Direct Soroban RPC communication via `@stellar/stellar-sdk`
+3. **ScVal Type Encoding** — Automatic conversion between JSON and Stellar XDR ScVal types
+4. **Transaction Confirmation Polling** — Waits for transaction success/failure with configurable timeouts
+5. **Structured Logging** — Pino-based JSON logging with request context and error traces
+6. **Security Headers** — Helmet middleware for HTTP security headers
+7. **CORS Configuration** — Configurable cross-origin resource sharing
+8. **Environment Validation** — Zod-validated `.env` with fail-fast on missing config
+9. **Docker Support** — Multi-stage Dockerfile with health checks
+10. **Docker Compose** — One-command setup with Redis for caching/rate limiting
+11. **TypeScript Strict Mode** — Full type safety with `noUnusedLocals`, `noUnusedParameters`
+12. **ESM Modules** — Modern ESNext module system with `import`/`export`
+13. **Hot Reload Development** — `tsx watch` for instant rebuilds during development
+14. **Separation of Concerns** — Clean route → service → contract client architecture
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Version | Purpose |
+|-------|-----------|---------|---------|
+| Runtime | Node.js | >= 20.0.0 | JavaScript runtime |
+| Language | TypeScript | 5.3.3 | Type-safe JavaScript |
+| Framework | Express | 4.18.2 | HTTP server and routing |
+| Validation | Zod | 3.22.4 | Request/response schema validation |
+| Stellar SDK | @stellar/stellar-sdk | 12.0.0 | Soroban RPC and contract interaction |
+| Logging | Pino | 8.17.2 | Fast structured JSON logger |
+| Log Formatting | pino-pretty | 10.3.1 | Human-readable log output (dev) |
+| HTTP Headers | Helmet | 7.1.0 | Security headers middleware |
+| CORS | cors | 2.8.5 | Cross-origin configuration |
+| Request Logging | Morgan | 1.10.0 | HTTP request logging |
+| Environment | dotenv | 16.3.1 | Environment variable loading |
+| Cache | ioredis | 5.3.2 | Redis client for caching |
+| Dev Runner | tsx | 4.7.0 | TypeScript execution with watch |
+| Testing | Vitest | 1.1.0 | Unit and integration testing |
+| Coverage | @vitest/coverage-v8 | 1.1.0 | Code coverage reports |
+| Linting | ESLint | 8.56.0 | Code quality enforcement |
+| Formatting | Prettier | 3.2.2 | Code formatting |
+| Container | Docker | 20-alpine | Production containerization |
+| Cache Service | Redis | 7-alpine | In-memory data store |
+
+---
+
+## Project Structure
+
+```
+web3-suite-defi-backend/
+├── .env.example                          # Environment variable template
+├── .gitignore                            # Git ignores
+├── CONTRIBUTING.md                       # Contribution guidelines
+├── Dockerfile                            # Multi-stage production build
+├── LICENSE                               # MIT License
+├── README.md                             # This file
+├── docker-compose.yml                    # Docker Compose with Redis
+├── package.json                          # Dependencies and scripts
+├── tsconfig.json                         # TypeScript configuration
+│
+└── src/
+    ├── index.ts                          # Express app setup and server start
+    ├── config.ts                         # Zod-validated environment config
+    │
+    ├── types/
+    │   └── index.ts                      # Zod schemas and TypeScript types
+    │
+    ├── routes/
+    │   ├── swap-routes.ts                # Swap API endpoints
+    │   └── lending-routes.ts             # Lending API endpoints
+    │
+    ├── services/
+    │   ├── swap-service.ts               # Swap business logic and contract calls
+    │   ├── lending-service.ts            # Lending business logic and contract calls
+    │   └── stellar.ts                    # Stellar SDK wrapper (server, signing, encoding)
+    │
+    ├── contracts/
+    │   └── stellar-client.ts             # Generic Soroban contract invocation client
+    │
+    └── utils/
+        └── logger.ts                     # Pino logger configuration
 ```
 
 ---
 
-## API Endpoints
+## API Reference
 
-### Swap Endpoints
+### Base URL
 
-| Method | Endpoint | Description | Request | Response |
-|--------|----------|-------------|---------|----------|
-| `GET` | `/api/swap/quote` | Get swap quote | Query params | `SwapQuoteResponse` |
-| `POST` | `/api/swap/execute` | Execute swap | `SwapExecuteRequest` | `SwapExecuteResponse` |
-| `GET` | `/api/swap/pools` | Get pool info | — | `PoolInfo` |
+```
+http://localhost:3001
+```
 
-#### `GET /api/swap/quote`
+All endpoints return JSON. Request bodies must have `Content-Type: application/json`.
 
-Get a swap quote without executing the transaction.
+---
 
-**Query Parameters:**
+### Health Check
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `tokenIn` | string | Yes | Address of input token |
-| `tokenOut` | string | Yes | Address of output token |
-| `amountIn` | string | Yes | Amount to swap (positive integer) |
-| `aToB` | boolean | Yes | Swap direction (A→B or B→A) |
+#### `GET /health`
 
-**Response:**
+Returns server status, version, and network information.
+
+**Response** `200 OK`
 
 ```json
 {
-  "amountIn": "1000000",
-  "amountOut": "987654",
-  "fee": "3000",
-  "priceImpactPct": "10",
-  "route": ["CAS3J...CCCP", "CB6CH...QAIS"]
+  "status": "ok",
+  "timestamp": "2026-09-15T12:00:00.000Z",
+  "version": "0.1.0",
+  "network": "testnet"
 }
 ```
 
-**Error Response (400):**
+**cURL**
+
+```bash
+curl http://localhost:3001/health
+```
+
+---
+
+### Swap Endpoints
+
+#### `GET /api/swap/quote`
+
+Get a swap quote without executing. Calculates output amount, fees, and price impact.
+
+**Query Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tokenIn` | `string` | Yes | Address of the input token |
+| `tokenOut` | `string` | Yes | Address of the output token |
+| `amountIn` | `string` | Yes | Amount to swap (positive integer) |
+| `aToB` | `string` | Yes | `"true"` for A→B, `"false"` for B→A |
+
+**Response** `200 OK`
+
+```json
+{
+  "amountIn": "1000",
+  "amountOut": "997",
+  "fee": "3",
+  "priceImpactPct": "100",
+  "route": [
+    "CAS3J7HYLGSEL2VK4LW25QW2YMOHQYDWGD6Y6QSEZ3OZCNR6ESY5CCCP",
+    "CB6CH2QSS6FNEBNSNKRMZ2NC2RYQKQ3K5VMWQV4ZVD4YKPP3KQXSQAIS"
+  ]
+}
+```
+
+**Error Response** `400 Bad Request`
 
 ```json
 {
@@ -109,324 +275,496 @@ Get a swap quote without executing the transaction.
       "code": "invalid_type",
       "expected": "string",
       "received": "undefined",
-      "path": ["amountIn"],
+      "path": ["tokenIn"],
       "message": "Required"
     }
   ]
 }
 ```
 
+**cURL**
+
+```bash
+curl "http://localhost:3001/api/swap/quote?\
+tokenIn=CAS3J7HYLGSEL2VK4LW25QW2YMOHQYDWGD6Y6QSEZ3OZCNR6ESY5CCCP&\
+tokenOut=CB6CH2QSS6FNEBNSNKRMZ2NC2RYQKQ3K5VMWQV4ZVD4YKPP3KQXSQAIS&\
+amountIn=1000&aToB=true"
+```
+
 ---
 
 #### `POST /api/swap/execute`
 
-Execute a swap transaction on-chain.
+Execute a swap transaction on-chain. Requires a secret key for signing.
 
-**Request Body:**
+**Request Body**
 
 ```json
 {
-  "from": "GAXI4...EXAMPLE",
-  "amountIn": "1000000",
-  "minAmountOut": "980000",
+  "from": "GCKFBEIYV2V55A5...S4D5QF",
+  "amountIn": "1000",
+  "minAmountOut": "990",
   "aToB": true,
-  "secretKey": "SXXXX...SECRET"
+  "secretKey": "SCKFBEIYV2V55A5...SECRET"
 }
 ```
 
-**Response:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `from` | `string` | Yes | Public key of the swap sender |
+| `amountIn` | `string` | Yes | Amount to swap (positive integer) |
+| `minAmountOut` | `string` | Yes | Minimum acceptable output (slippage protection) |
+| `aToB` | `boolean` | Yes | Swap direction |
+| `secretKey` | `string` | Yes | Secret key for transaction signing |
+
+**Response** `200 OK`
 
 ```json
 {
-  "txHash": "a1b2c3d4e5f6...",
-  "amountIn": "1000000",
-  "amountOut": "987654",
-  "timestamp": 1706000000000
+  "txHash": "a1b2c3d4e5f6...hash",
+  "amountIn": "1000",
+  "amountOut": "997",
+  "timestamp": 1726406400000
 }
+```
+
+**cURL**
+
+```bash
+curl -X POST http://localhost:3001/api/swap/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "GCKFBEIYV2V55A5...S4D5QF",
+    "amountIn": "1000",
+    "minAmountOut": "990",
+    "aToB": true,
+    "secretKey": "SCKFBEIYV2V55A5...SECRET"
+  }'
 ```
 
 ---
 
-#### `GET /api/swap/pools`
+#### `GET /api/swap/pool`
 
-Get current pool reserves and metadata.
+Get current swap pool information including reserves and fee tier.
 
-**Response:**
+**Response** `200 OK`
 
 ```json
 {
-  "reserveA": "50000000",
-  "reserveB": "25000000",
+  "reserveA": "100000",
+  "reserveB": "200000",
   "feeBps": "30",
-  "totalShares": "1000000"
+  "totalShares": "15000"
 }
+```
+
+**cURL**
+
+```bash
+curl http://localhost:3001/api/swap/pool
 ```
 
 ---
 
 ### Lending Endpoints
 
-| Method | Endpoint | Description | Request | Response |
-|--------|----------|-------------|---------|----------|
-| `GET` | `/api/lending/pools` | Get pool info + rates | — | `LendingPoolInfo` |
-| `GET` | `/api/lending/rates` | Get current rates | — | `RatesResponse` |
-| `POST` | `/api/lending/supply` | Supply assets | `SupplyRequest` | `SupplyResponse` |
-| `POST` | `/api/lending/borrow` | Borrow assets | `BorrowRequest` | `BorrowResponse` |
-| `GET` | `/api/lending/position` | Get user position | Query `address` | `UserLendingPosition` |
+#### `GET /api/lending/pool`
 
-#### `GET /api/lending/pools`
+Get lending pool information including deposits, borrows, utilization, and rates.
 
-**Response:**
+**Response** `200 OK`
 
 ```json
 {
-  "totalDeposits": "100000000",
-  "totalBorrowed": "45000000",
-  "utilizationRate": "4500",
-  "supplyApy": "315",
-  "borrowApy": "525",
+  "totalDeposits": "100000",
+  "totalBorrowed": "50000",
+  "utilizationRate": "5000",
+  "supplyApy": "150",
+  "borrowApy": "200",
   "reserveFactor": "500"
 }
 ```
 
+**cURL**
+
+```bash
+curl http://localhost:3001/api/lending/pool
+```
+
+---
+
 #### `GET /api/lending/rates`
 
-**Response:**
+Get current supply and borrow rates with utilization.
+
+**Response** `200 OK`
 
 ```json
 {
-  "supplyApy": "315",
-  "borrowApy": "525",
-  "utilization": "4500"
+  "supplyApy": "150",
+  "borrowApy": "200",
+  "utilization": "5000"
 }
 ```
+
+**cURL**
+
+```bash
+curl http://localhost:3001/api/lending/rates
+```
+
+---
 
 #### `POST /api/lending/supply`
 
-**Request Body:**
+Supply assets to the lending pool to earn interest.
+
+**Request Body**
 
 ```json
 {
-  "amount": "10000000",
-  "secretKey": "SXXXX...SECRET"
+  "amount": "10000",
+  "secretKey": "SCKFBEIYV2V55A5...SECRET"
 }
 ```
 
-**Response:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `amount` | `string` | Yes | Amount to supply (positive integer) |
+| `secretKey` | `string` | Yes | Secret key for transaction signing |
+
+**Response** `200 OK`
 
 ```json
 {
-  "shares": "10000000",
+  "shares": "10000",
   "exchangeRate": "1000000000"
 }
 ```
 
+**cURL**
+
+```bash
+curl -X POST http://localhost:3001/api/lending/supply \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": "10000",
+    "secretKey": "SCKFBEIYV2V55A5...SECRET"
+  }'
+```
+
+---
+
 #### `POST /api/lending/borrow`
 
-**Request Body:**
+Borrow assets from the lending pool against deposited collateral.
+
+**Request Body**
 
 ```json
 {
-  "amount": "5000000",
-  "collateralAmount": "10000000",
-  "secretKey": "SXXXX...SECRET"
+  "amount": "5000",
+  "collateralAmount": "10000",
+  "secretKey": "SCKFBEIYV2V55A5...SECRET"
 }
 ```
 
-**Response:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `amount` | `string` | Yes | Amount to borrow (positive integer) |
+| `collateralAmount` | `string` | Yes | Collateral to deposit (positive integer) |
+| `secretKey` | `string` | Yes | Secret key for transaction signing |
+
+**Response** `200 OK`
 
 ```json
 {
-  "amount": "5000000",
+  "amount": "5000",
   "healthFactor": "15000",
   "utilization": "5000"
 }
 ```
 
-#### `GET /api/lending/position?address=GAXI4...`
-
-**Response:**
+**Error Response** `400 Bad Request`
 
 ```json
 {
-  "deposited": "10000000",
-  "borrowed": "5000000",
-  "collateralValue": "10000000",
-  "healthFactor": "15000",
-  "interestEarned": "25000",
-  "interestOwed": "12500"
+  "code": "VALIDATION_ERROR",
+  "message": "Invalid request body",
+  "details": [...]
 }
+```
+
+**cURL**
+
+```bash
+curl -X POST http://localhost:3001/api/lending/borrow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": "5000",
+    "collateralAmount": "10000",
+    "secretKey": "SCKFBEIYV2V55A5...SECRET"
+  }'
 ```
 
 ---
 
-### Health Check
+#### `GET /api/lending/position/:address`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Server health check |
+Get a user's lending position and health factor.
 
-**Response:**
+**Path Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `address` | `string` | Stellar public key of the user |
+
+**Response** `200 OK`
 
 ```json
 {
-  "status": "ok",
-  "timestamp": "2024-01-24T12:00:00.000Z",
-  "version": "0.1.0",
-  "network": "testnet"
+  "deposited": "10000",
+  "borrowed": "5000",
+  "collateralValue": "10000",
+  "healthFactor": "16000",
+  "interestEarned": "150",
+  "interestOwed": "100"
 }
 ```
 
----
+**cURL**
 
-## Project Structure
-
-```
-backend/
-├── src/
-│   ├── index.ts                    # Express server entry
-│   ├── config.ts                   # Environment configuration
-│   ├── types/
-│   │   └── index.ts                # Zod schemas + TypeScript types
-│   ├── routes/
-│   │   ├── swap-routes.ts          # /api/swap/* endpoints
-│   │   └── lending-routes.ts       # /api/lending/* endpoints
-│   ├── services/
-│   │   ├── swap-service.ts         # Swap business logic
-│   │   ├── lending-service.ts      # Lending business logic
-│   │   └── stellar.ts              # Stellar RPC client wrapper
-│   ├── contracts/
-│   │   └── stellar-client.ts       # Soroban contract invocation
-│   └── utils/
-│       └── logger.ts               # Pino logger
-├── package.json
-├── tsconfig.json
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── README.md
-├── CONTRIBUTING.md
-└── LICENSE
+```bash
+curl http://localhost:3001/api/lending/position/GCKFBEIYV2V55A5...S4D5QF
 ```
 
 ---
 
-## Setup Instructions
+### Error Responses
+
+All errors follow a consistent format:
+
+```json
+{
+  "code": "ERROR_CODE",
+  "message": "Human-readable description"
+}
+```
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | `VALIDATION_ERROR` | Request failed schema validation |
+| 404 | `NOT_FOUND` | Endpoint does not exist |
+| 500 | `INTERNAL_ERROR` | Unexpected server error |
+
+In development mode, `INTERNAL_ERROR` responses include the error message. In production, the message is generic.
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
-- Node.js >= 20.0.0
-- npm or pnpm
-- Docker & Docker Compose (optional)
-- Stellar testnet account with XLM
+- **Node.js** >= 20.0.0
+- **npm** or **yarn**
+- **Redis** (optional, for caching/rate limiting)
+- **Deployed Soroban contracts** (swap, liquidity, lending)
 
-### 1. Install Dependencies
+### Installation
 
 ```bash
-cd backend/
+# Clone the repository
+git clone https://github.com/sudo-robi/web3-suite-defi-backend.git
+cd web3-suite-defi-backend
+
+# Install dependencies
 npm install
-```
 
-### 2. Configure Environment
-
-```bash
+# Copy environment template
 cp .env.example .env
-# Edit .env with your values
+
+# Edit .env with your contract IDs and Stellar config
 ```
 
-### 3. Deploy Contracts
+### Configuration
 
-Before running the backend, deploy the Soroban contracts and set their IDs in `.env`:
+See [Environment Variables](#environment-variables) for the full list of configuration options.
 
-```bash
-cd ../contracts/
-cargo build --release
-# Deploy and note the contract IDs
+At minimum, you need:
+
+```env
+SWAP_CONTRACT_ID=<your-deployed-swap-contract-id>
+LIQUIDITY_CONTRACT_ID=<your-deployed-liquidity-contract-id>
+LENDING_CONTRACT_ID=<your-deployed-lending-contract-id>
 ```
 
-### 4. Start Development Server
+### Running
 
 ```bash
+# Development (hot reload)
 npm run dev
-# Server runs on http://localhost:3001
+
+# Build for production
+npm run build
+
+# Start production server
+npm start
+
+# Run on specific port
+PORT=4000 npm start
 ```
 
-### 5. Docker (Optional)
+The server starts at `http://localhost:3001` by default.
+
+### Docker
 
 ```bash
-# Start with Redis
-npm run docker:up
+# Start API + Redis
+docker compose up -d
 
-# Stop
-npm run docker:down
+# View logs
+docker compose logs -f api
+
+# Stop services
+docker compose down
+
+# Rebuild and start
+docker compose up -d --build
+```
+
+### Testing
+
+```bash
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run with coverage
+npm run test:coverage
+
+# Run integration tests
+npm run test:integration
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PORT` | No | `3001` | Server port |
-| `HOST` | No | `0.0.0.0` | Server host |
-| `NODE_ENV` | No | `development` | Environment mode |
-| `LOG_LEVEL` | No | `info` | Pino log level |
-| `STELLAR_NETWORK` | No | `testnet` | Stellar network |
-| `STELLAR_RPC_URL` | Yes | — | Soroban RPC endpoint |
-| `STELLAR_HORIZON_URL` | No | — | Horizon API endpoint |
-| `STELLAR_PASSPHRASE` | Yes | — | Network passphrase |
-| `SWAP_CONTRACT_ID` | Yes | — | Deployed swap contract ID |
-| `LIQUIDITY_CONTRACT_ID` | Yes | — | Deployed liquidity contract ID |
-| `LENDING_CONTRACT_ID` | Yes | — | Deployed lending contract ID |
-| `ADMIN_SECRET_KEY` | No | — | Admin keypair secret |
-| `ADMIN_PUBLIC_KEY` | No | — | Admin keypair public |
-| `CORS_ORIGIN` | No | `http://localhost:5173` | Allowed CORS origin |
-| `REDIS_URL` | No | `redis://localhost:6379` | Redis connection URL |
-| `RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate limit window (ms) |
-| `RATE_LIMIT_MAX_REQUESTS` | No | `100` | Max requests per window |
+| Variable | Type | Default | Required | Description |
+|----------|------|---------|----------|-------------|
+| `PORT` | `number` | `3001` | No | Server port |
+| `HOST` | `string` | `0.0.0.0` | No | Server host |
+| `NODE_ENV` | `string` | `development` | No | Environment: `development`, `production`, `test` |
+| `LOG_LEVEL` | `string` | `info` | No | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace` |
+| `STELLAR_NETWORK` | `string` | `testnet` | No | Network: `testnet`, `mainnet`, `standalone` |
+| `STELLAR_RPC_URL` | `string` | `https://soroban-testnet.stellar.org` | No | Stellar Soroban RPC endpoint |
+| `STELLAR_HORIZON_URL` | `string` | — | No | Stellar Horizon API URL |
+| `STELLAR_PASSPHRASE` | `string` | `Test SDF Network ; September 2015` | No | Network passphrase |
+| `SWAP_CONTRACT_ID` | `string` | — | **Yes** | Deployed swap contract address |
+| `LIQUIDITY_CONTRACT_ID` | `string` | — | **Yes** | Deployed liquidity contract address |
+| `LENDING_CONTRACT_ID` | `string` | — | **Yes** | Deployed lending contract address |
+| `ADMIN_SECRET_KEY` | `string` | — | No | Admin secret key for contract operations |
+| `ADMIN_PUBLIC_KEY` | `string` | — | No | Admin public key |
+| `CORS_ORIGIN` | `string` | `http://localhost:5173` | No | Allowed CORS origin |
+| `REDIS_URL` | `string` | `redis://localhost:6379` | No | Redis connection URL |
+| `RATE_LIMIT_WINDOW_MS` | `number` | `60000` | No | Rate limit window in milliseconds |
+| `RATE_LIMIT_MAX_REQUESTS` | `number` | `100` | No | Max requests per window |
 
 ---
 
-## Type Definitions
+## Deployment
 
-All types are defined in `src/types/index.ts` using Zod for runtime validation:
+### Production Build
 
-```typescript
-// Swap types
-SwapQuoteRequestSchema     // { tokenIn, tokenOut, amountIn, aToB }
-SwapExecuteRequestSchema   // { from, amountIn, minAmountOut, aToB, secretKey }
-SwapQuoteResponse          // { amountIn, amountOut, fee, priceImpactPct, route }
-SwapExecuteResponse        // { txHash, amountIn, amountOut, timestamp }
+```bash
+# Build TypeScript
+npm run build
 
-// Lending types
-SupplyRequestSchema        // { amount, secretKey }
-BorrowRequestSchema        // { amount, collateralAmount, secretKey }
-LendingPoolInfo            // { totalDeposits, totalBorrowed, utilizationRate, supplyApy, borrowApy, reserveFactor }
-UserLendingPosition        // { deposited, borrowed, collateralValue, healthFactor, interestEarned, interestOwed }
+# Start production server
+NODE_ENV=production node dist/index.js
+```
+
+### Docker Production
+
+The Dockerfile uses a multi-stage build:
+
+1. **Builder stage**: Compiles TypeScript
+2. **Runner stage**: Copies only compiled output + production dependencies
+
+```bash
+# Build and push to registry
+docker build -t defi-backend:latest .
+docker push registry.example.com/defi-backend:latest
+
+# Deploy with Docker Compose
+docker compose -f docker-compose.yml up -d
+```
+
+### Health Check
+
+The Docker image includes a built-in health check:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 ```
 
 ---
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+### Branch Naming
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Feature | `feat/<description>` | `feat/add-redis-cache` |
+| Bug Fix | `fix/<description>` | `fix/decode-u128-overflow` |
+| Refactor | `refactor/<description>` | `refactor/extract-encoding-utils` |
+| Docs | `docs/<description>` | `docs/api-reference` |
+
+### Commit Conventions
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add Redis caching for swap quotes
+fix: handle Stellar RPC timeout gracefully
+refactor: extract ScVal encoding to shared utils
+docs: add API endpoint documentation
+test: add integration tests for lending borrow
+```
+
+### Code Style
+
+- **TypeScript strict mode** — No `any` types in new code
+- **Zod validation** — All request/response shapes validated
+- **Error handling** — All route handlers wrapped in try/catch
+- **Logging** — Use `logger.info/warn/error` with structured context
+- **Naming**: `camelCase` for variables/functions, `PascalCase` for types/classes
+- **Imports**: Use `.js` extension for ESM compatibility
+- **No secrets in code** — All secrets via environment variables
+
+### Pull Request Process
+
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Write tests for new functionality
-4. Ensure type safety: `npm run typecheck`
-5. Lint: `npm run lint`
-6. Format: `npm run format`
-7. Submit a pull request
-
-### Code Standards
-
-- All routes must validate input with Zod schemas
-- Use structured logging via pino
-- Handle errors with typed error responses
-- Never expose secret keys in logs
-- Use `async/await` — no raw Promises
+2. Create a feature branch from `main`
+3. Write tests for new endpoints/services
+4. Ensure all checks pass: `npm test && npm run typecheck && npm run lint`
+5. Submit PR with description and API examples
 
 ---
 
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <sub>Built with TypeScript & Stellar SDK</sub>
+</p>
